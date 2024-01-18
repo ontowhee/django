@@ -2141,7 +2141,7 @@ class MakeMigrationsTests(MigrationTestBase):
             )
 
         # Normal --dry-run output
-        self.assertIn("- Add field silly_char to sillymodel", out.getvalue())
+        self.assertIn("+ Add field silly_char to sillymodel", out.getvalue())
 
         # Additional output caused by verbosity 3
         # The complete migrations file that would be written
@@ -2171,7 +2171,7 @@ class MakeMigrationsTests(MigrationTestBase):
             )
         initial_file = os.path.join(migration_dir, "0001_initial.py")
         self.assertEqual(out.getvalue(), f"{initial_file}\n")
-        self.assertIn("    - Create model ModelWithCustomBase\n", err.getvalue())
+        self.assertIn("    + Create model ModelWithCustomBase\n", err.getvalue())
 
     @mock.patch("builtins.input", return_value="Y")
     def test_makemigrations_scriptable_merge(self, mock_input):
@@ -2216,7 +2216,7 @@ class MakeMigrationsTests(MigrationTestBase):
             self.assertTrue(os.path.exists(initial_file))
 
         # Command output indicates the migration is created.
-        self.assertIn(" - Create model SillyModel", out.getvalue())
+        self.assertIn(" + Create model SillyModel", out.getvalue())
 
     @override_settings(MIGRATION_MODULES={"migrations": "some.nonexistent.path"})
     def test_makemigrations_migrations_modules_nonexistent_toplevel_package(self):
@@ -2321,12 +2321,12 @@ class MakeMigrationsTests(MigrationTestBase):
                 out.getvalue().lower(),
                 "merging conflicting_app_with_dependencies\n"
                 "  branch 0002_conflicting_second\n"
-                "    - create model something\n"
+                "    + create model something\n"
                 "  branch 0002_second\n"
                 "    - delete model tribble\n"
                 "    - remove field silly_field from author\n"
-                "    - add field rating to author\n"
-                "    - create model book\n"
+                "    + add field rating to author\n"
+                "    + create model book\n"
                 "\n"
                 "merging will only work if the operations printed above do not "
                 "conflict\n"
@@ -2392,20 +2392,35 @@ class MakeMigrationsTests(MigrationTestBase):
                 "makemigrations", "migrations", "--name", "invalid name", "--empty"
             )
 
-    def test_makemigrations_check(self):
+    def test_makemigrations_check_with_changes(self):
         """
         makemigrations --check should exit with a non-zero status when
         there are changes to an app requiring migrations.
         """
+        out = io.StringIO()
         with self.temporary_migration_module() as tmpdir:
-            with self.assertRaises(SystemExit):
-                call_command("makemigrations", "--check", "migrations", verbosity=0)
-            self.assertFalse(os.path.exists(tmpdir))
+            with self.assertRaises(SystemExit) as cm:
+                call_command(
+                    "makemigrations",
+                    "--check",
+                    "migrations",
+                    stdout=out,
+                )
+            self.assertEqual(os.listdir(tmpdir), ["__init__.py"])
+        self.assertEqual(cm.exception.code, 1)
+        self.assertIn("Migrations for 'migrations':", out.getvalue())
 
+    def test_makemigrations_check_no_changes(self):
+        """
+        makemigrations --check should exit with a zero status when there are no
+        changes.
+        """
+        out = io.StringIO()
         with self.temporary_migration_module(
             module="migrations.test_migrations_no_changes"
         ):
-            call_command("makemigrations", "--check", "migrations", verbosity=0)
+            call_command("makemigrations", "--check", "migrations", stdout=out)
+        self.assertEqual("No changes detected in app 'migrations'\n", out.getvalue())
 
     def test_makemigrations_migration_path_output(self):
         """
@@ -2654,6 +2669,32 @@ class MakeMigrationsTests(MigrationTestBase):
             with open(new_migration_file) as fp:
                 self.assertNotEqual(initial_content, fp.read())
             self.assertIn(f"Deleted {migration_file}", out.getvalue())
+
+    def test_makemigrations_update_custom_name(self):
+        custom_name = "delete_something"
+        with self.temporary_migration_module(
+            module="migrations.test_migrations"
+        ) as migration_dir:
+            old_migration_file = os.path.join(migration_dir, "0002_second.py")
+            with open(old_migration_file) as fp:
+                initial_content = fp.read()
+
+            with captured_stdout() as out:
+                call_command(
+                    "makemigrations", "migrations", update=True, name=custom_name
+                )
+            self.assertFalse(
+                any(
+                    filename.startswith("0003")
+                    for filename in os.listdir(migration_dir)
+                )
+            )
+            self.assertIs(os.path.exists(old_migration_file), False)
+            new_migration_file = os.path.join(migration_dir, f"0002_{custom_name}.py")
+            self.assertIs(os.path.exists(new_migration_file), True)
+            with open(new_migration_file) as fp:
+                self.assertNotEqual(initial_content, fp.read())
+            self.assertIn(f"Deleted {old_migration_file}", out.getvalue())
 
     def test_makemigrations_update_applied_migration(self):
         recorder = MigrationRecorder(connection)

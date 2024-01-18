@@ -872,9 +872,11 @@ Accessing the cache
     requests for the same alias in the same thread will return the same
     object.
 
+    .. code-block:: pycon
+
         >>> from django.core.cache import caches
-        >>> cache1 = caches['myalias']
-        >>> cache2 = caches['myalias']
+        >>> cache1 = caches["myalias"]
+        >>> cache2 = caches["myalias"]
         >>> cache1 is cache2
         True
 
@@ -900,17 +902,21 @@ Accessing the cache
 Basic usage
 -----------
 
-.. currentmodule:: django.core.caches
+.. currentmodule:: django.core.cache
 
 The basic interface is:
 
 .. method:: cache.set(key, value, timeout=DEFAULT_TIMEOUT, version=None)
 
-    >>> cache.set('my_key', 'hello, world!', 30)
+.. code-block:: pycon
+
+    >>> cache.set("my_key", "hello, world!", 30)
 
 .. method:: cache.get(key, default=None, version=None)
 
-    >>> cache.get('my_key')
+.. code-block:: pycon
+
+    >>> cache.get("my_key")
     'hello, world!'
 
 ``key`` should be a ``str``, and ``value`` can be any picklable Python object.
@@ -1043,7 +1049,7 @@ of keys to be cleared:
 
 Finally, if you want to delete all the keys in the cache, use
 ``cache.clear()``.  Be careful with this; ``clear()`` will remove *everything*
-from the cache, not just the keys set by your application. :
+from the cache, not just the keys set by your application:
 
 .. code-block:: pycon
 
@@ -1099,6 +1105,8 @@ nonexistent cache key:
 
 You can close the connection to your cache with ``close()`` if implemented by
 the cache backend.
+
+.. code-block:: pycon
 
     >>> cache.close()
 

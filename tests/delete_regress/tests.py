@@ -51,11 +51,9 @@ class DeleteLockingTest(TransactionTestCase):
         # Create a second connection to the default database
         self.conn2 = connection.copy()
         self.conn2.set_autocommit(False)
-
-    def tearDown(self):
         # Close down the second connection.
-        self.conn2.rollback()
-        self.conn2.close()
+        self.addCleanup(self.conn2.close)
+        self.addCleanup(self.conn2.rollback)
 
     def test_concurrent_delete(self):
         """Concurrent deletes don't collide and lock the database (#9479)."""
@@ -396,10 +394,8 @@ class DeleteTests(TestCase):
 
 
 class DeleteDistinct(SimpleTestCase):
-    def test_disallowed_delete_distinct(self):
-        msg = "Cannot call delete() after .distinct()."
-        with self.assertRaisesMessage(TypeError, msg):
-            Book.objects.distinct().delete()
+    def test_disallowed_delete_distinct_on(self):
+        msg = "Cannot call delete() after .distinct(*fields)."
         with self.assertRaisesMessage(TypeError, msg):
             Book.objects.distinct("id").delete()
 

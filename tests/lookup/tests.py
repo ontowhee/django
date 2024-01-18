@@ -691,15 +691,14 @@ class LookupTests(TestCase):
         )
 
     def test_exclude(self):
-        pub_date = datetime(2005, 11, 20)
         a8 = Article.objects.create(
-            headline="Article_ with underscore", pub_date=pub_date
+            headline="Article_ with underscore", pub_date=datetime(2005, 11, 20)
         )
         a9 = Article.objects.create(
-            headline="Article% with percent sign", pub_date=pub_date
+            headline="Article% with percent sign", pub_date=datetime(2005, 11, 21)
         )
         a10 = Article.objects.create(
-            headline="Article with \\ backslash", pub_date=pub_date
+            headline="Article with \\ backslash", pub_date=datetime(2005, 11, 22)
         )
         # exclude() is the opposite of filter() when doing lookups:
         self.assertSequenceEqual(
@@ -1338,6 +1337,16 @@ class LookupTests(TestCase):
                 with self.assertRaisesMessage(ValueError, msg):
                     qs.exists()
 
+    def test_isnull_textfield(self):
+        self.assertSequenceEqual(
+            Author.objects.filter(bio__isnull=True),
+            [self.au2],
+        )
+        self.assertSequenceEqual(
+            Author.objects.filter(bio__isnull=False),
+            [self.au1],
+        )
+
     def test_lookup_rhs(self):
         product = Product.objects.create(name="GME", qty_target=5000)
         stock_1 = Stock.objects.create(product=product, short=True, qty_available=180)
@@ -1513,7 +1522,6 @@ class LookupQueryingTests(TestCase):
         qs = Season.objects.order_by(LessThan(F("year"), 1910), F("year"))
         self.assertSequenceEqual(qs, [self.s1, self.s3, self.s2])
 
-    @skipUnlessDBFeature("supports_boolean_expr_in_select_clause")
     def test_aggregate_combined_lookup(self):
         expression = Cast(GreaterThan(F("year"), 1900), models.IntegerField())
         qs = Season.objects.aggregate(modern=models.Sum(expression))

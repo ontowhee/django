@@ -695,10 +695,17 @@ The following attributes and methods are available on any subclass of
         were used.
 
     .. method:: models.AbstractBaseUser.check_password(raw_password)
+    .. method:: models.AbstractBaseUser.acheck_password(raw_password)
+
+        *Asynchronous version*: ``acheck_password()``
 
         Returns ``True`` if the given raw string is the correct password for
         the user. (This takes care of the password hashing in making the
         comparison.)
+
+        .. versionchanged:: 5.0
+
+            ``acheck_password()`` method was added.
 
     .. method:: models.AbstractBaseUser.set_unusable_password()
 
@@ -723,8 +730,6 @@ The following attributes and methods are available on any subclass of
         :ref:`session-invalidation-on-password-change`.
 
     .. method:: models.AbstractBaseUser.get_session_auth_fallback_hash()
-
-        .. versionadded:: 4.1.8
 
         Yields the HMAC of the password field using
         :setting:`SECRET_KEY_FALLBACKS`. Used by ``get_user()``.
@@ -794,19 +799,6 @@ utility methods:
         Retrieves a user instance using the contents of the field
         nominated by ``USERNAME_FIELD``.
 
-    .. method:: models.BaseUserManager.make_random_password(length=10, allowed_chars='abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789')
-
-        .. deprecated:: 4.2
-
-        Returns a random password with the given length and given string of
-        allowed characters. Note that the default value of ``allowed_chars``
-        doesn't contain letters that can cause user confusion, including:
-
-        * ``i``, ``l``, ``I``, and ``1`` (lowercase letter i, lowercase
-          letter L, uppercase letter i, and the number one)
-        * ``o``, ``O``, and ``0`` (lowercase letter o, uppercase letter o,
-          and zero)
-
 Extending Django's default ``User``
 -----------------------------------
 
@@ -863,11 +855,6 @@ extend these forms in this manner::
         class Meta(UserCreationForm.Meta):
             model = CustomUser
             fields = UserCreationForm.Meta.fields + ("custom_field",)
-
-.. versionchanged:: 4.2
-
-    In older versions, :class:`~django.contrib.auth.forms.UserCreationForm`
-    didn't save many-to-many form fields for a custom user model.
 
 Custom users and :mod:`django.contrib.admin`
 --------------------------------------------

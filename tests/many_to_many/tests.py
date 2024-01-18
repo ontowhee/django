@@ -3,6 +3,7 @@ from unittest import mock
 from django.db import connection, transaction
 from django.test import TestCase, skipIfDBFeature, skipUnlessDBFeature
 from django.test.utils import CaptureQueriesContext
+from django.utils.deprecation import RemovedInDjango60Warning
 
 from .models import (
     Article,
@@ -522,6 +523,12 @@ class ManyToManyTests(TestCase):
         a4.publications.add(self.p1)
         self.assertEqual(a4.publications.count(), 2)
 
+    def test_create_after_prefetch(self):
+        a4 = Article.objects.prefetch_related("publications").get(id=self.a4.id)
+        self.assertSequenceEqual(a4.publications.all(), [self.p2])
+        p5 = a4.publications.create(title="Django beats")
+        self.assertCountEqual(a4.publications.all(), [self.p2, p5])
+
     def test_set_after_prefetch(self):
         a4 = Article.objects.prefetch_related("publications").get(id=self.a4.id)
         self.assertEqual(a4.publications.count(), 1)
@@ -565,6 +572,26 @@ class ManyToManyTests(TestCase):
         self.assertEqual(
             self.p3.article_set.exists(), self.p3.article_set.all().exists()
         )
+
+    def test_get_prefetch_queryset_warning(self):
+        articles = Article.objects.all()
+        msg = (
+            "get_prefetch_queryset() is deprecated. Use get_prefetch_querysets() "
+            "instead."
+        )
+        with self.assertWarnsMessage(RemovedInDjango60Warning, msg):
+            self.a1.publications.get_prefetch_queryset(articles)
+
+    def test_get_prefetch_querysets_invalid_querysets_length(self):
+        articles = Article.objects.all()
+        msg = (
+            "querysets argument of get_prefetch_querysets() should have a length of 1."
+        )
+        with self.assertRaisesMessage(ValueError, msg):
+            self.a1.publications.get_prefetch_querysets(
+                instances=articles,
+                querysets=[Publication.objects.all(), Publication.objects.all()],
+            )
 
 
 class ManyToManyQueryTests(TestCase):

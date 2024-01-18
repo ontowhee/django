@@ -2,7 +2,6 @@
 import random as random_module
 import re
 import types
-import warnings
 from decimal import ROUND_HALF_UP, Context, Decimal, InvalidOperation, getcontext
 from functools import wraps
 from inspect import unwrap
@@ -12,7 +11,6 @@ from urllib.parse import quote
 
 from django.utils import formats
 from django.utils.dateformat import format, time_format
-from django.utils.deprecation import RemovedInDjango51Warning
 from django.utils.encoding import iri_to_uri
 from django.utils.html import avoid_wrapping, conditional_escape, escape, escapejs
 from django.utils.html import json_script as _json_script
@@ -445,6 +443,16 @@ def escape_filter(value):
 
 
 @register.filter(is_safe=True)
+def escapeseq(value):
+    """
+    An "escape" filter for sequences. Mark each element in the sequence,
+    individually, as a string that should be auto-escaped. Return a list with
+    the results.
+    """
+    return [conditional_escape(obj) for obj in value]
+
+
+@register.filter(is_safe=True)
 @stringfilter
 def force_escape(value):
     """
@@ -586,8 +594,9 @@ def join(value, arg, autoescape=True):
     """Join a list with a string, like Python's ``str.join(list)``."""
     try:
         if autoescape:
-            value = [conditional_escape(v) for v in value]
-        data = conditional_escape(arg).join(value)
+            data = conditional_escape(arg).join([conditional_escape(v) for v in value])
+        else:
+            data = arg.join(value)
     except TypeError:  # Fail silently if arg isn't iterable.
         return value
     return mark_safe(data)
@@ -609,20 +618,6 @@ def length(value):
         return len(value)
     except (ValueError, TypeError):
         return 0
-
-
-@register.filter(is_safe=False)
-def length_is(value, arg):
-    """Return a boolean of whether the value's length is the argument."""
-    warnings.warn(
-        "The length_is template filter is deprecated in favor of the length template "
-        "filter and the == operator within an {% if %} tag.",
-        RemovedInDjango51Warning,
-    )
-    try:
-        return len(value) == int(arg)
-    except (ValueError, TypeError):
-        return ""
 
 
 @register.filter(is_safe=True)

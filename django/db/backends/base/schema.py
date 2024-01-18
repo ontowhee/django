@@ -111,7 +111,7 @@ class BaseDatabaseSchemaEditor:
 
     sql_create_unique = (
         "ALTER TABLE %(table)s ADD CONSTRAINT %(name)s "
-        "UNIQUE (%(columns)s)%(deferrable)s"
+        "UNIQUE%(nulls_distinct)s (%(columns)s)%(deferrable)s"
     )
     sql_delete_unique = sql_delete_constraint
 
@@ -129,7 +129,7 @@ class BaseDatabaseSchemaEditor:
     )
     sql_create_unique_index = (
         "CREATE UNIQUE INDEX %(name)s ON %(table)s "
-        "(%(columns)s)%(include)s%(condition)s"
+        "(%(columns)s)%(include)s%(condition)s%(nulls_distinct)s"
     )
     sql_rename_index = "ALTER INDEX %(old_name)s RENAME TO %(new_name)s"
     sql_delete_index = "DROP INDEX %(name)s"
@@ -332,7 +332,9 @@ class BaseDatabaseSchemaEditor:
             and self.connection.features.interprets_empty_strings_as_nulls
         ):
             null = True
-        if not null:
+        if field.generated:
+            yield self._column_generated_sql(field)
+        elif not null:
             yield "NOT NULL"
         elif not self.connection.features.implied_column_null:
             yield "NULL"
@@ -422,11 +424,21 @@ class BaseDatabaseSchemaEditor:
             params = []
         return sql % default_sql, params
 
+    def _column_generated_sql(self, field):
+        """Return the SQL to use in a GENERATED ALWAYS clause."""
+        expression_sql, params = field.generated_sql(self.connection)
+        persistency_sql = "STORED" if field.db_persist else "VIRTUAL"
+        if params:
+            expression_sql = expression_sql % tuple(self.quote_value(p) for p in params)
+        return f"GENERATED ALWAYS AS ({expression_sql}) {persistency_sql}"
+
     @staticmethod
     def _effective_default(field):
         # This method allows testing its logic without a connection.
         if field.has_default():
             default = field.get_default()
+        elif field.generated:
+            default = None
         elif not field.null and field.blank and field.empty_strings_allowed:
             if field.get_internal_type() == "BinaryField":
                 default = b""
@@ -489,8 +501,7 @@ class BaseDatabaseSchemaEditor:
                                 model, field, field_type, field.db_comment
                             )
                         )
-        # Add any field index and index_together's (deferred as SQLite
-        # _remake_table needs it).
+        # Add any field index (deferred as SQLite _remake_table needs it).
         self.deferred_sql.extend(self._model_indexes_sql(model))
 
         # Make M2M tables
@@ -659,13 +670,14 @@ class BaseDatabaseSchemaEditor:
                 sql.rename_table_references(old_db_table, new_db_table)
 
     def alter_db_table_comment(self, model, old_db_table_comment, new_db_table_comment):
-        self.execute(
-            self.sql_alter_table_comment
-            % {
-                "table": self.quote_name(model._meta.db_table),
-                "comment": self.quote_value(new_db_table_comment or ""),
-            }
-        )
+        if self.sql_alter_table_comment and self.connection.features.supports_comments:
+            self.execute(
+                self.sql_alter_table_comment
+                % {
+                    "table": self.quote_name(model._meta.db_table),
+                    "comment": self.quote_value(new_db_table_comment or ""),
+                }
+            )
 
     def alter_db_tablespace(self, model, old_db_tablespace, new_db_tablespace):
         """Move a model's table between tablespaces."""
@@ -733,9 +745,9 @@ class BaseDatabaseSchemaEditor:
         }
         self.execute(sql, params)
         # Drop the default if we need to
-        # (Django usually does not use in-database defaults)
         if (
-            not self.skip_default_on_alter(field)
+            field.db_default is NOT_PROVIDED
+            and not self.skip_default_on_alter(field)
             and self.effective_default(field) is not None
         ):
             changes_sql, params = self._alter_column_default_sql(
@@ -847,6 +859,18 @@ class BaseDatabaseSchemaEditor:
                 "Cannot alter field %s into %s - they are not compatible types "
                 "(you cannot alter to or from M2M fields, or add or remove "
                 "through= on M2M fields)" % (old_field, new_field)
+            )
+        elif old_field.generated != new_field.generated or (
+            new_field.generated
+            and (
+                old_field.db_persist != new_field.db_persist
+                or old_field.generated_sql(self.connection)
+                != new_field.generated_sql(self.connection)
+            )
+        ):
+            raise ValueError(
+                f"Modifying GeneratedFields is not supported - the field {new_field} "
+                "must be removed and re-added with the new definition."
             )
 
         self._alter_field(
@@ -1346,7 +1370,7 @@ class BaseDatabaseSchemaEditor:
         for cases when a creation type is different to an alteration type
         (e.g. SERIAL in PostgreSQL, PostGIS fields).
 
-        Return a two-tuple of: an SQL fragment of (sql, params) to insert into
+        Return a 2-tuple of: an SQL fragment of (sql, params) to insert into
         an ALTER TABLE statement and a list of extra (sql, params) tuples to
         run once the field is altered.
         """
@@ -1561,19 +1585,14 @@ class BaseDatabaseSchemaEditor:
 
     def _model_indexes_sql(self, model):
         """
-        Return a list of all index SQL statements (field indexes,
-        index_together, Meta.indexes) for the specified model.
+        Return a list of all index SQL statements (field indexes, Meta.indexes)
+        for the specified model.
         """
         if not model._meta.managed or model._meta.proxy or model._meta.swapped:
             return []
         output = []
         for field in model._meta.local_fields:
             output.extend(self._field_indexes_sql(model, field))
-
-        # RemovedInDjango51Warning.
-        for field_names in model._meta.index_together:
-            fields = [model._meta.get_field(field) for field in field_names]
-            output.append(self._create_index_sql(model, fields=fields, suffix="_idx"))
 
         for index in model._meta.indexes:
             if (
@@ -1593,6 +1612,8 @@ class BaseDatabaseSchemaEditor:
         return output
 
     def _field_should_be_altered(self, old_field, new_field, ignore=None):
+        if not old_field.concrete and not new_field.concrete:
+            return False
         ignore = ignore or set()
         _, old_path, old_args, old_kwargs = old_field.deconstruct()
         _, new_path, new_args, new_kwargs = new_field.deconstruct()
@@ -1601,10 +1622,20 @@ class BaseDatabaseSchemaEditor:
         # - changing an attribute that doesn't affect the schema
         # - changing an attribute in the provided set of ignored attributes
         # - adding only a db_column and the column name is not changed
+        # - db_table does not change for model referenced by foreign keys
         for attr in ignore.union(old_field.non_db_attrs):
             old_kwargs.pop(attr, None)
         for attr in ignore.union(new_field.non_db_attrs):
             new_kwargs.pop(attr, None)
+        if (
+            not new_field.many_to_many
+            and old_field.remote_field
+            and new_field.remote_field
+            and old_field.remote_field.model._meta.db_table
+            == new_field.remote_field.model._meta.db_table
+        ):
+            old_kwargs.pop("to", None)
+            new_kwargs.pop("to", None)
         return self.quote_name(old_field.column) != self.quote_name(
             new_field.column
         ) or (old_path, old_args, old_kwargs) != (new_path, new_args, new_kwargs)
@@ -1675,6 +1706,37 @@ class BaseDatabaseSchemaEditor:
         if deferrable == Deferrable.IMMEDIATE:
             return " DEFERRABLE INITIALLY IMMEDIATE"
 
+    def _unique_index_nulls_distinct_sql(self, nulls_distinct):
+        if nulls_distinct is False:
+            return " NULLS NOT DISTINCT"
+        elif nulls_distinct is True:
+            return " NULLS DISTINCT"
+        return ""
+
+    def _unique_supported(
+        self,
+        condition=None,
+        deferrable=None,
+        include=None,
+        expressions=None,
+        nulls_distinct=None,
+    ):
+        return (
+            (not condition or self.connection.features.supports_partial_indexes)
+            and (
+                not deferrable
+                or self.connection.features.supports_deferrable_unique_constraints
+            )
+            and (not include or self.connection.features.supports_covering_indexes)
+            and (
+                not expressions or self.connection.features.supports_expression_indexes
+            )
+            and (
+                nulls_distinct is None
+                or self.connection.features.supports_nulls_distinct_unique_constraints
+            )
+        )
+
     def _unique_sql(
         self,
         model,
@@ -1685,15 +1747,26 @@ class BaseDatabaseSchemaEditor:
         include=None,
         opclasses=None,
         expressions=None,
+        nulls_distinct=None,
     ):
-        if (
-            deferrable
-            and not self.connection.features.supports_deferrable_unique_constraints
+        if not self._unique_supported(
+            condition=condition,
+            deferrable=deferrable,
+            include=include,
+            expressions=expressions,
+            nulls_distinct=nulls_distinct,
         ):
             return None
-        if condition or include or opclasses or expressions:
-            # Databases support conditional, covering, and functional unique
-            # constraints via a unique index.
+
+        if (
+            condition
+            or include
+            or opclasses
+            or expressions
+            or nulls_distinct is not None
+        ):
+            # Databases support conditional, covering, functional unique,
+            # and nulls distinct constraints via a unique index.
             sql = self._create_unique_sql(
                 model,
                 fields,
@@ -1702,6 +1775,7 @@ class BaseDatabaseSchemaEditor:
                 include=include,
                 opclasses=opclasses,
                 expressions=expressions,
+                nulls_distinct=nulls_distinct,
             )
             if sql:
                 self.deferred_sql.append(sql)
@@ -1725,17 +1799,14 @@ class BaseDatabaseSchemaEditor:
         include=None,
         opclasses=None,
         expressions=None,
+        nulls_distinct=None,
     ):
-        if (
-            (
-                deferrable
-                and not self.connection.features.supports_deferrable_unique_constraints
-            )
-            or (condition and not self.connection.features.supports_partial_indexes)
-            or (include and not self.connection.features.supports_covering_indexes)
-            or (
-                expressions and not self.connection.features.supports_expression_indexes
-            )
+        if not self._unique_supported(
+            condition=condition,
+            deferrable=deferrable,
+            include=include,
+            expressions=expressions,
+            nulls_distinct=nulls_distinct,
         ):
             return None
 
@@ -1766,6 +1837,7 @@ class BaseDatabaseSchemaEditor:
             condition=self._index_condition_sql(condition),
             deferrable=self._deferrable_constraint_sql(deferrable),
             include=self._index_include_sql(model, include),
+            nulls_distinct=self._unique_index_nulls_distinct_sql(nulls_distinct),
         )
 
     def _unique_constraint_name(self, table, columns, quote=True):
@@ -1788,17 +1860,14 @@ class BaseDatabaseSchemaEditor:
         include=None,
         opclasses=None,
         expressions=None,
+        nulls_distinct=None,
     ):
-        if (
-            (
-                deferrable
-                and not self.connection.features.supports_deferrable_unique_constraints
-            )
-            or (condition and not self.connection.features.supports_partial_indexes)
-            or (include and not self.connection.features.supports_covering_indexes)
-            or (
-                expressions and not self.connection.features.supports_expression_indexes
-            )
+        if not self._unique_supported(
+            condition=condition,
+            deferrable=deferrable,
+            include=include,
+            expressions=expressions,
+            nulls_distinct=nulls_distinct,
         ):
             return None
         if condition or include or opclasses or expressions:

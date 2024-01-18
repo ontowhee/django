@@ -21,6 +21,7 @@ from django.forms.widgets import (
     RadioSelect,
     SelectMultiple,
 )
+from django.utils.choices import BaseChoiceIterator
 from django.utils.text import capfirst, get_text_list
 from django.utils.translation import gettext
 from django.utils.translation import gettext_lazy as _
@@ -1177,7 +1178,13 @@ class BaseInlineFormSet(BaseModelFormSet):
                 to_field = self.instance._meta.get_field(kwargs["to_field"])
             else:
                 to_field = self.instance._meta.pk
-            if to_field.has_default():
+
+            if to_field.has_default() and (
+                # Don't ignore a parent's auto-generated key if it's not the
+                # parent model's pk and form data is provided.
+                to_field.attname == self.fk.remote_field.model._meta.pk.name
+                or not form.data
+            ):
                 setattr(self.instance, to_field.attname, None)
 
         form.fields[name] = InlineForeignKeyField(self.instance, **kwargs)
@@ -1204,6 +1211,7 @@ def _get_foreign_key(parent_model, model, fk_name=None, can_fail=False):
         if len(fks_to_parent) == 1:
             fk = fks_to_parent[0]
             parent_list = parent_model._meta.get_parent_list()
+            parent_list.append(parent_model)
             if (
                 not isinstance(fk, ForeignKey)
                 or (
@@ -1229,6 +1237,7 @@ def _get_foreign_key(parent_model, model, fk_name=None, can_fail=False):
     else:
         # Try to discover what the ForeignKey from model to parent_model is
         parent_list = parent_model._meta.get_parent_list()
+        parent_list.append(parent_model)
         fks_to_parent = [
             f
             for f in opts.fields
@@ -1396,7 +1405,7 @@ class ModelChoiceIteratorValue:
         return self.value == other
 
 
-class ModelChoiceIterator:
+class ModelChoiceIterator(BaseChoiceIterator):
     def __init__(self, field):
         self.field = field
         self.queryset = field.queryset
@@ -1526,7 +1535,7 @@ class ModelChoiceField(ChoiceField):
         # the queryset.
         return self.iterator(self)
 
-    choices = property(_get_choices, ChoiceField._set_choices)
+    choices = property(_get_choices, ChoiceField.choices.fset)
 
     def prepare_value(self, value):
         if hasattr(value, "_meta"):

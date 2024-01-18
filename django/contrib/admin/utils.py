@@ -6,6 +6,7 @@ from functools import reduce
 from operator import or_
 
 from django.core.exceptions import FieldDoesNotExist
+from django.core.validators import EMPTY_VALUES
 from django.db import models, router
 from django.db.models.constants import LOOKUP_SEP
 from django.db.models.deletion import Collector
@@ -139,13 +140,14 @@ def get_deleted_objects(objs, request, admin_site):
 
     def format_callback(obj):
         model = obj.__class__
-        has_admin = model in admin_site._registry
         opts = obj._meta
 
         no_edit_link = "%s: %s" % (capfirst(opts.verbose_name), obj)
 
-        if has_admin:
-            if not admin_site._registry[model].has_delete_permission(request, obj):
+        if admin_site.is_registered(model):
+            if not admin_site.get_model_admin(model).has_delete_permission(
+                request, obj
+            ):
                 perms_needed.add(opts.verbose_name)
             try:
                 admin_url = reverse(
@@ -301,6 +303,8 @@ def lookup_field(name, obj, model_admin=None):
                 value = attr()
             else:
                 value = attr
+            if hasattr(model_admin, "model") and hasattr(model_admin.model, name):
+                attr = getattr(model_admin.model, name)
         f = None
     else:
         attr = None
@@ -430,7 +434,7 @@ def display_for_field(value, field, empty_value_display):
     # general null test.
     elif isinstance(field, models.BooleanField):
         return _boolean_icon(value)
-    elif value is None:
+    elif value in field.empty_values:
         return empty_value_display
     elif isinstance(field, models.DateTimeField):
         return formats.localize(timezone.template_localtime(value))
@@ -456,7 +460,7 @@ def display_for_value(value, empty_value_display, boolean=False):
 
     if boolean:
         return _boolean_icon(value)
-    elif value is None:
+    elif value in EMPTY_VALUES:
         return empty_value_display
     elif isinstance(value, bool):
         return str(value)
