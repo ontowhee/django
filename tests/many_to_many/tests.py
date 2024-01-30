@@ -596,9 +596,10 @@ class ManyToManyTests(TestCase):
 
 class ManyToManyQueryTests(TestCase):
     """
-    #29725 - Testing SQL optimization when using
-    count() and exists() functions on queryset for
-    many to many relations
+    SQL is optimized to reference the through table without joining against
+    the related table when using count() and exists() functions on a queryset
+    for many to many relations. The optimization applies to the case where
+    there are no filters.
     """
 
     @classmethod
