@@ -1224,7 +1224,7 @@ def create_forward_many_to_many_manager(superclass, rel, reverse):
             if (
                 constrained_target is not None
                 and superclass is Manager
-                and (self.get_prefetch_cache() is None)
+                and self.get_prefetch_cache() is None
             ):
                 return constrained_target.exists()
             else:
@@ -1235,7 +1235,7 @@ def create_forward_many_to_many_manager(superclass, rel, reverse):
             if (
                 constrained_target is not None
                 and superclass is Manager
-                and (self.get_prefetch_cache() is None)
+                and self.get_prefetch_cache() is None
             ):
                 return constrained_target.count()
             else:
