@@ -1133,12 +1133,11 @@ def create_forward_many_to_many_manager(superclass, rel, reverse):
                 pass  # nothing to clear from cache
 
         def get_queryset(self):
-            cache = self.get_prefetch_cache()
-            if cache is None:
+            if (cache := self.get_prefetch_cache()) is not None:
+                return cache
+            else:
                 queryset = super().get_queryset()
                 return self._apply_rel_filters(queryset)
-            else:
-                return cache
 
         def get_prefetch_queryset(self, instances, queryset=None):
             warnings.warn(
